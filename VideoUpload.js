@@ -1,13 +1,14 @@
-// VideoUpload.js - FIXED VERSION
+// VideoUpload.js - Updated to use VideoApiService
 import * as DocumentPicker from 'expo-document-picker';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Button, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import apiService from './services/apiService'; // Adjusted path
+import videoApiService from 'services/videoApiService'; // Changed from apiService to videoApiService
 
 const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [title, setTitle] = useState('');
   const [caption, setCaption] = useState('');
+  const [name, setName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -16,6 +17,8 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
       setSelectedFile(initialFile);
       const fileName = initialFile.name || 'Recorded Video';
       setMessage(`Selected: ${fileName}`);
+      // Auto-populate name field with filename
+      setName(fileName.replace(/\.[^/.]+$/, '')); // Remove extension
     }
   }, [initialFile]);
 
@@ -41,6 +44,8 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
         
         setSelectedFile(videoFile);
         setMessage(`Selected: ${videoFile.name}`);
+        // Auto-populate name field with filename
+        setName(videoFile.name.replace(/\.[^/.]+$/, ''));
       } else {
         if (!initialFile) setSelectedFile(null);
         setMessage(result.canceled ? 'File picking cancelled.' : 'No file selected.');
@@ -58,6 +63,7 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
     }
     setTitle('');
     setCaption('');
+    setName('');
     setMessage('');
   };
 
@@ -81,6 +87,11 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
       return;
     }
 
+    if (!name.trim()) {
+      setMessage('Please enter a name for your video.');
+      return;
+    }
+
     setIsLoading(true);
     setMessage('Uploading...');
 
@@ -95,8 +106,8 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
         type: selectedFile.type || 'video/mp4',
       };
 
-      // Metadata for apiService.uploadVideo
       const metadata = {
+        name: name.trim(),
         title: title.trim(),
         caption: caption.trim(),
       };
@@ -104,27 +115,8 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
       console.log('Uploading file:', fileToUpload);
       console.log('With metadata:', metadata);
 
-      // Check authentication - IMPROVED ERROR HANDLING
-      if (!apiService.getAuthToken()) {
-        try {
-          console.log('No auth token found, initializing...');
-          await apiService.initializeAuthToken();
-          
-          if (!apiService.getAuthToken()) {
-            setMessage('User not authenticated. Please login to upload videos.');
-            setIsLoading(false);
-            return;
-          }
-        } catch (authError) {
-          console.error('Authentication initialization failed:', authError);
-          setMessage('Authentication error. Please try logging in again.');
-          setIsLoading(false);
-          return;
-        }
-      }
-
-      // Attempt the upload
-      const response = await apiService.uploadVideo(fileToUpload, metadata);
+      // Use videoApiService instead of apiService
+      const response = await videoApiService.uploadVideo(fileToUpload, metadata);
       setIsLoading(false);
 
       if (response.success) {
@@ -206,6 +198,18 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
               <Text style={styles.sectionTitle}>Video Details</Text>
               
               <View style={styles.inputContainer}>
+                <Text style={styles.label}>Name *</Text>
+                <TextInput
+                  style={styles.input}
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="Enter video name"
+                  editable={!isLoading}
+                  maxLength={100}
+                />
+              </View>
+
+              <View style={styles.inputContainer}>
                 <Text style={styles.label}>Title *</Text>
                 <TextInput
                   style={styles.input}
@@ -238,16 +242,9 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
             {selectedFile && (
               <View style={styles.button}>
                 {isLoading ? (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="small" color="#4472C4" />
-                    <Text style={styles.loadingText}>Uploading...</Text>
-                  </View>
+                  <ActivityIndicator size="large" color="#0000ff" />
                 ) : (
-                  <Button 
-                    title="Upload Video" 
-                    onPress={handleUpload}
-                    disabled={isLoading || !title.trim()}
-                  />
+                  <Button title="Upload Video" onPress={handleUpload} />
                 )}
               </View>
             )}
@@ -255,8 +252,8 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
             <View style={styles.button}>
               <Button 
                 title="Cancel" 
-                onPress={handleCancel}
-                color="#666"
+                onPress={handleCancel} 
+                color="#888" 
                 disabled={isLoading}
               />
             </View>
@@ -277,19 +274,20 @@ const styles = StyleSheet.create({
   },
   container: {
     padding: 20,
+    paddingBottom: 40,
   },
   header: {
     fontSize: 24,
     fontWeight: 'bold',
-    textAlign: 'center',
     marginBottom: 20,
+    textAlign: 'center',
     color: '#333',
   },
   section: {
     backgroundColor: 'white',
+    padding: 15,
+    marginBottom: 15,
     borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
@@ -302,25 +300,25 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
-    marginBottom: 12,
+    marginBottom: 10,
     color: '#333',
   },
   inputContainer: {
-    marginBottom: 16,
+    marginBottom: 15,
   },
   label: {
     fontSize: 16,
     fontWeight: '500',
-    marginBottom: 8,
+    marginBottom: 5,
     color: '#333',
   },
   input: {
     borderWidth: 1,
     borderColor: '#ddd',
-    borderRadius: 8,
+    borderRadius: 6,
     padding: 12,
     fontSize: 16,
-    backgroundColor: '#fafafa',
+    backgroundColor: '#fff',
   },
   textArea: {
     height: 80,
@@ -330,43 +328,28 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   button: {
-    marginBottom: 12,
-  },
-  loadingContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 12,
-  },
-  loadingText: {
-    marginLeft: 8,
-    fontSize: 16,
-    color: '#4472C4',
+    marginBottom: 10,
   },
   message: {
-    marginTop: 12,
-    padding: 12,
+    marginTop: 10,
+    padding: 10,
     borderRadius: 6,
     fontSize: 14,
-    textAlign: 'center',
   },
   successMessage: {
     backgroundColor: '#d4edda',
-    color: '#155724',
     borderColor: '#c3e6cb',
-    borderWidth: 1,
+    color: '#155724',
   },
   errorMessage: {
     backgroundColor: '#f8d7da',
-    color: '#721c24',
     borderColor: '#f5c6cb',
-    borderWidth: 1,
+    color: '#721c24',
   },
   infoMessage: {
-    backgroundColor: '#d1ecf1',
-    color: '#0c5460',
-    borderColor: '#bee5eb',
-    borderWidth: 1,
+    backgroundColor: '#e2e3e5',
+    borderColor: '#d6d8db',
+    color: '#383d41',
   },
 });
 

@@ -1,8 +1,9 @@
-// CameraRecord.js - FIXED VERSION
+// CameraRecord.js - INTEGRATED WITH CAMERA SERVICE
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Button, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import cameraApiService from 'services/cameraApiService'; // Adjust path as needed
 
 const CameraRecord = ({ onRecordingComplete, onCancel }) => {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -11,10 +12,12 @@ const CameraRecord = ({ onRecordingComplete, onCancel }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [isCameraReady, setIsCameraReady] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState('');
   const cameraRef = useRef(null);
   const recordingTimerRef = useRef(null);
   const isRecordingRef = useRef(false);
-  const recordingPromiseRef = useRef(null); // Track the recording promise
+  const recordingPromiseRef = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -23,6 +26,14 @@ const CameraRecord = ({ onRecordingComplete, onCancel }) => {
       }
       if (!microphonePermission?.granted) {
         await requestMicrophonePermission();
+      }
+      
+      // Initialize camera service and cleanup old temp files
+      try {
+        await cameraApiService.cleanupTempFiles();
+        console.log('Camera service initialized and temp files cleaned');
+      } catch (error) {
+        console.warn('Camera service initialization warning:', error);
       }
     })();
   }, []);
@@ -60,12 +71,13 @@ const CameraRecord = ({ onRecordingComplete, onCancel }) => {
   };
 
   const handleStartRecording = async () => {
-    if (!cameraRef.current || isRecording || !isCameraReady || isRecordingRef.current) {
+    if (!cameraRef.current || isRecording || !isCameraReady || isRecordingRef.current || isProcessing) {
       console.log('Cannot start recording:', { 
         hasCamera: !!cameraRef.current, 
         isRecording, 
         isCameraReady,
-        isRecordingRef: isRecordingRef.current 
+        isRecordingRef: isRecordingRef.current,
+        isProcessing 
       });
       return;
     }
@@ -78,12 +90,19 @@ const CameraRecord = ({ onRecordingComplete, onCancel }) => {
       isRecordingRef.current = true;
       setRecordingTime(0);
 
-      // Simplified recording options - remove potentially problematic options
-      const recordingOptions = {
+      // Get camera settings from service (optional)
+      const settingsResponse = await cameraApiService.getCameraSettings();
+      let recordingOptions = {
         maxDuration: 30, // 30 seconds max
-        // Remove quality option as it might cause issues on some devices
-        // quality: '720p',
       };
+      
+      // Apply server settings if available
+      if (settingsResponse.success && settingsResponse.data) {
+        recordingOptions = {
+          ...recordingOptions,
+          ...settingsResponse.data.recordingOptions,
+        };
+      }
 
       console.log('Recording options:', recordingOptions);
       
@@ -97,7 +116,7 @@ const CameraRecord = ({ onRecordingComplete, onCancel }) => {
       
       // Only process if we have valid data and haven't already processed
       if (data && data.uri && isRecordingRef.current) {
-        handleRecordingComplete(data);
+        await handleRecordingComplete(data);
       }
       
     } catch (error) {
@@ -128,8 +147,12 @@ const CameraRecord = ({ onRecordingComplete, onCancel }) => {
     }
   };
 
-  const handleRecordingComplete = (data) => {
+  const handleRecordingComplete = async (data) => {
     console.log('Processing recording completion...');
+    
+    // Set processing state
+    setIsProcessing(true);
+    setProcessingStatus('Validating recording...');
     
     // Reset recording states
     setIsRecording(false);
@@ -143,7 +166,16 @@ const CameraRecord = ({ onRecordingComplete, onCancel }) => {
       recordingTimerRef.current = null;
     }
     
-    if (data && data.uri) {
+    if (!data || !data.uri) {
+      console.error('Recording data is invalid:', data);
+      setIsProcessing(false);
+      setProcessingStatus('');
+      Alert.alert('Recording Error', 'Failed to save the recorded video. Please try again.');
+      onRecordingComplete(null);
+      return;
+    }
+
+    try {
       const fileName = `video_${Date.now()}.mp4`;
       const fileType = 'video/mp4';
       
@@ -152,12 +184,77 @@ const CameraRecord = ({ onRecordingComplete, onCancel }) => {
         name: fileName,
         type: fileType
       };
+
+      // Validate the recording using the camera service
+      setProcessingStatus('Validating file...');
+      const validationResponse = await cameraApiService.validateRecording(videoFile);
       
-      console.log('Calling onRecordingComplete with:', videoFile);
-      onRecordingComplete(videoFile);
-    } else {
-      console.error('Recording data is invalid:', data);
-      Alert.alert('Recording Error', 'Failed to save the recorded video. Please try again.');
+      if (!validationResponse.success) {
+        console.error('Recording validation failed:', validationResponse.error);
+        setIsProcessing(false);
+        setProcessingStatus('');
+        Alert.alert('Recording Error', validationResponse.error || 'Recording validation failed');
+        onRecordingComplete(null);
+        return;
+      }
+
+      console.log('Recording validated successfully:', validationResponse.data);
+
+      // Save recording metadata to the service
+      setProcessingStatus('Saving metadata...');
+      const fileId = `rec_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      
+      if (validationResponse.data) {
+        const metadataResponse = await cameraApiService.saveRecordingMetadata(
+          fileId,
+          validationResponse.data
+        );
+        
+        if (metadataResponse.success) {
+          console.log('Metadata saved successfully');
+        } else {
+          console.warn('Failed to save metadata:', metadataResponse.error);
+          // Don't fail the whole process, just log the warning
+        }
+      }
+
+      // Upload session data for analytics
+      setProcessingStatus('Saving session data...');
+      const sessionData = {
+        sessionId: fileId,
+        recordingDuration: recordingTime,
+        cameraType: cameraType,
+        timestamp: new Date().toISOString(),
+        platform: Platform.OS,
+        quality: 'standard', // Could be dynamic based on settings
+      };
+
+      const sessionResponse = await cameraApiService.uploadSessionData(sessionData);
+      if (sessionResponse.success) {
+        console.log('Session data saved successfully');
+      } else {
+        console.warn('Failed to save session data:', sessionResponse.error);
+      }
+
+      // Prepare the complete file object with additional metadata
+      const completeVideoFile = {
+        ...videoFile,
+        fileId: fileId,
+        metadata: validationResponse.data,
+        sessionData: sessionData,
+      };
+
+      setIsProcessing(false);
+      setProcessingStatus('');
+      
+      console.log('Calling onRecordingComplete with:', completeVideoFile);
+      onRecordingComplete(completeVideoFile);
+
+    } catch (error) {
+      console.error('Error processing recording:', error);
+      setIsProcessing(false);
+      setProcessingStatus('');
+      Alert.alert('Processing Error', 'Failed to process the recorded video. Please try again.');
       onRecordingComplete(null);
     }
   };
@@ -170,6 +267,8 @@ const CameraRecord = ({ onRecordingComplete, onCancel }) => {
     isRecordingRef.current = false;
     setRecordingTime(0);
     recordingPromiseRef.current = null;
+    setIsProcessing(false);
+    setProcessingStatus('');
     
     // Clear timer
     if (recordingTimerRef.current) {
@@ -253,7 +352,7 @@ const CameraRecord = ({ onRecordingComplete, onCancel }) => {
         style={styles.cameraPreview}
         facing={cameraType}
         ref={cameraRef}
-        mode="video" // Explicitly set to video mode
+        mode="video"
         onCameraReady={() => {
           console.log('Camera is ready for video recording');
           setIsCameraReady(true);
@@ -269,12 +368,12 @@ const CameraRecord = ({ onRecordingComplete, onCancel }) => {
         <TouchableOpacity 
           style={styles.controlButton} 
           onPress={onCancel}
-          disabled={isRecording} // Prevent cancel during recording
+          disabled={isRecording || isProcessing}
         >
           <Ionicons 
             name="close" 
             size={30} 
-            color={isRecording ? "#888" : "white"} 
+            color={(isRecording || isProcessing) ? "#888" : "white"} 
           />
         </TouchableOpacity>
         
@@ -290,12 +389,12 @@ const CameraRecord = ({ onRecordingComplete, onCancel }) => {
         <TouchableOpacity 
           style={styles.controlButton} 
           onPress={handleFlipCamera}
-          disabled={isRecording}
+          disabled={isRecording || isProcessing}
         >
           <Ionicons 
             name="camera-reverse" 
             size={30} 
-            color={isRecording ? "#888" : "white"} 
+            color={(isRecording || isProcessing) ? "#888" : "white"} 
           />
         </TouchableOpacity>
       </View>
@@ -306,20 +405,26 @@ const CameraRecord = ({ onRecordingComplete, onCancel }) => {
           style={[
             styles.recordButton,
             isRecording ? styles.recordButtonRecording : {},
-            !isCameraReady ? styles.recordButtonDisabled : {},
+            (!isCameraReady || isProcessing) ? styles.recordButtonDisabled : {},
           ]}
           onPress={isRecording ? handleStopRecording : handleStartRecording}
-          disabled={!isCameraReady}
+          disabled={!isCameraReady || isProcessing}
         >
-          <Ionicons
-            name={isRecording ? "stop-circle" : "radio-button-on"}
-            size={70}
-            color={isRecording ? "red" : "white"}
-          />
+          {isProcessing ? (
+            <ActivityIndicator size="large" color="white" />
+          ) : (
+            <Ionicons
+              name={isRecording ? "stop-circle" : "radio-button-on"}
+              size={70}
+              color={isRecording ? "red" : "white"}
+            />
+          )}
         </TouchableOpacity>
         
-        {!isCameraReady && (
-          <Text style={styles.statusText}>Initializing camera...</Text>
+        {(!isCameraReady || isProcessing) && (
+          <Text style={styles.statusText}>
+            {!isCameraReady ? 'Initializing camera...' : processingStatus}
+          </Text>
         )}
       </View>
     </View>
@@ -370,6 +475,7 @@ const styles = StyleSheet.create({
     borderRadius: 50,
     backgroundColor: 'rgba(255,255,255,0.2)',
     marginBottom: 10,
+    padding: 10,
   },
   recordButtonRecording: {
     backgroundColor: 'rgba(255,0,0,0.3)',
