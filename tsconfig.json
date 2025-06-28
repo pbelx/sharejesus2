@@ -17,5 +17,5 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
-, "CameraRecord.js"  ]
+, "app/CameraRecord.js", "app/VideoUpload.js"  ]
 }
