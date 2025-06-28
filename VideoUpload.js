@@ -1,7 +1,8 @@
+// VideoUpload.js - FIXED VERSION
 import * as DocumentPicker from 'expo-document-picker';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Button, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import apiService from 'services/apiService'; // Adjusted path
+import apiService from './services/apiService'; // Adjusted path
 
 const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -13,7 +14,6 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
   useEffect(() => {
     if (initialFile) {
       setSelectedFile(initialFile);
-      // Safe access to name property with fallback
       const fileName = initialFile.name || 'Recorded Video';
       setMessage(`Selected: ${fileName}`);
     }
@@ -24,7 +24,7 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
       setMessage("A recorded video is already selected. To choose another, please go back and select 'Upload Existing Video' again.");
       return;
     }
-    
+
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: 'video/*',
@@ -42,7 +42,6 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
         setSelectedFile(videoFile);
         setMessage(`Selected: ${videoFile.name}`);
       } else {
-        // Keep current selectedFile if cancel, unless it was from initialFile
         if (!initialFile) setSelectedFile(null);
         setMessage(result.canceled ? 'File picking cancelled.' : 'No file selected.');
       }
@@ -59,6 +58,7 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
     }
     setTitle('');
     setCaption('');
+    setMessage('');
   };
 
   const getFileExtension = (uri) => {
@@ -73,6 +73,11 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
   const handleUpload = async () => {
     if (!selectedFile) {
       setMessage('Please select or record a video file first.');
+      return;
+    }
+
+    if (!title.trim()) {
+      setMessage('Please enter a title for your video.');
       return;
     }
 
@@ -92,27 +97,33 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
 
       // Metadata for apiService.uploadVideo
       const metadata = {
-        title: title.trim() || 'Untitled Video',
+        title: title.trim(),
         caption: caption.trim(),
       };
 
-      // Check authentication
+      console.log('Uploading file:', fileToUpload);
+      console.log('With metadata:', metadata);
+
+      // Check authentication - IMPROVED ERROR HANDLING
       if (!apiService.getAuthToken()) {
         try {
+          console.log('No auth token found, initializing...');
           await apiService.initializeAuthToken();
+          
           if (!apiService.getAuthToken()) {
-            setMessage('User not authenticated. Please login.');
+            setMessage('User not authenticated. Please login to upload videos.');
             setIsLoading(false);
             return;
           }
         } catch (authError) {
-          console.error('Authentication error:', authError);
+          console.error('Authentication initialization failed:', authError);
           setMessage('Authentication error. Please try logging in again.');
           setIsLoading(false);
           return;
         }
       }
 
+      // Attempt the upload
       const response = await apiService.uploadVideo(fileToUpload, metadata);
       setIsLoading(false);
 
@@ -120,23 +131,40 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
         const videoId = response.data?.id || 'N/A';
         setMessage(`Upload successful! Video ID: ${videoId}`);
         resetForm();
+        
         // Call onUploadComplete after a delay to show success message
-        setTimeout(() => onUploadComplete(), 2000);
+        setTimeout(() => {
+          if (onUploadComplete) {
+            onUploadComplete();
+          }
+        }, 2000);
       } else {
         const errorMessage = response.error || 'Unknown error occurred';
+        console.error('Upload failed:', errorMessage);
         setMessage(`Upload failed: ${errorMessage}`);
-        // Don't call onUploadComplete on failure
       }
     } catch (error) {
       console.error('Upload error:', error);
       setIsLoading(false);
-      setMessage('Upload failed: Network error or server unavailable');
+      
+      // Provide more specific error messages
+      if (error.message && error.message.includes('Network request failed')) {
+        setMessage('Upload failed: Network connection error. Please check your internet connection.');
+      } else if (error.message && error.message.includes('401')) {
+        setMessage('Upload failed: Authentication error. Please login again.');
+      } else if (error.message && error.message.includes('413')) {
+        setMessage('Upload failed: File too large. Please select a smaller video file.');
+      } else {
+        setMessage('Upload failed: Network error or server unavailable');
+      }
     }
   };
 
   const handleCancel = () => {
     resetForm();
-    onCancel();
+    if (onCancel) {
+      onCancel();
+    }
   };
 
   return (
@@ -146,82 +174,93 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.container}>
-        <Text style={styles.header}>
-          {initialFile ? "Confirm Upload" : "Upload Video"}
-        </Text>
-
-        {!initialFile && (
-          <View style={styles.buttonWrapper}>
-            <Button 
-              title="Select Video File" 
-              onPress={handleFilePick} 
-              disabled={isLoading} 
-            />
-          </View>
-        )}
-
-        {selectedFile && (
-          <Text style={styles.fileInfo}>
-            Selected: {selectedFile.name || 'Unknown file'}
+          <Text style={styles.header}>
+            {initialFile ? 'Upload Recorded Video' : 'Upload Video'}
           </Text>
-        )}
 
-        <TextInput
-          style={styles.input}
-          placeholder="Title"
-          value={title}
-          onChangeText={setTitle}
-          editable={!isLoading}
-          maxLength={100}
-        />
-        
-        <TextInput
-          style={[styles.input, styles.textArea]}
-          placeholder="Caption (optional)"
-          value={caption}
-          onChangeText={setCaption}
-          editable={!isLoading}
-          multiline
-          numberOfLines={3}
-          maxLength={500}
-        />
-        
-        <View style={styles.buttonWrapper}>
-          <Button
-            title={isLoading ? 'Uploading...' : 'Upload Video'}
-            onPress={handleUpload}
-            disabled={isLoading || !selectedFile}
-          />
-        </View>
-        
-        {isLoading && (
-          <ActivityIndicator 
-            size="large" 
-            color="#3260AD" 
-            style={styles.loader} 
-          />
-        )}
-
-        {message ? (
-          <Text 
-            style={[
-              styles.message, 
-              message.startsWith('Upload successful') ? styles.success : styles.error
-            ]}
-          >
-            {message}
-          </Text>
-        ) : null}
-        
-        {!isLoading && (
-          <View style={styles.buttonWrapper}>
-            <Button 
-              title="Cancel / Back to Options" 
-              onPress={handleCancel} 
-              color="#888" 
-            />
+          {/* File Selection Section */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Video File</Text>
+            {!initialFile && (
+              <Button 
+                title="Select Video File" 
+                onPress={handleFilePick}
+                disabled={isLoading}
+              />
+            )}
+            {message ? (
+              <Text style={[
+                styles.message, 
+                message.includes('successful') ? styles.successMessage : 
+                message.includes('failed') || message.includes('Error') ? styles.errorMessage : 
+                styles.infoMessage
+              ]}>
+                {message}
+              </Text>
+            ) : null}
           </View>
-        )}
+
+          {/* Video Details Section */}
+          {selectedFile && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Video Details</Text>
+              
+              <View style={styles.inputContainer}>
+                <Text style={styles.label}>Title *</Text>
+                <TextInput
+                  style={styles.input}
+                  value={title}
+                  onChangeText={setTitle}
+                  placeholder="Enter video title"
+                  editable={!isLoading}
+                  maxLength={100}
+                />
+              </View>
+
+              <View style={styles.inputContainer}>
+                <Text style={styles.label}>Caption</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  value={caption}
+                  onChangeText={setCaption}
+                  placeholder="Enter video caption (optional)"
+                  multiline
+                  numberOfLines={3}
+                  editable={!isLoading}
+                  maxLength={500}
+                />
+              </View>
+            </View>
+          )}
+
+          {/* Action Buttons */}
+          <View style={styles.buttonContainer}>
+            {selectedFile && (
+              <View style={styles.button}>
+                {isLoading ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="small" color="#4472C4" />
+                    <Text style={styles.loadingText}>Uploading...</Text>
+                  </View>
+                ) : (
+                  <Button 
+                    title="Upload Video" 
+                    onPress={handleUpload}
+                    disabled={isLoading || !title.trim()}
+                  />
+                )}
+              </View>
+            )}
+            
+            <View style={styles.button}>
+              <Button 
+                title="Cancel" 
+                onPress={handleCancel}
+                color="#666"
+                disabled={isLoading}
+              />
+            </View>
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -231,60 +270,104 @@ const VideoUpload = ({ initialFile, onUploadComplete, onCancel }) => {
 const styles = StyleSheet.create({
   scrollContainer: {
     flex: 1,
+    backgroundColor: '#f5f5f5',
   },
   scrollView: {
     flex: 1,
   },
   container: {
-    flex: 1,
     padding: 20,
-    justifyContent: 'center',
-    alignItems: 'stretch',
   },
   header: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: 'bold',
+    textAlign: 'center',
     marginBottom: 20,
-    textAlign: 'center',
+    color: '#333',
   },
-  fileInfo: {
-    marginVertical: 10,
-    textAlign: 'center',
-    color: '#555',
+  section: {
+    backgroundColor: 'white',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.22,
+    shadowRadius: 2.22,
+    elevation: 3,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 12,
+    color: '#333',
+  },
+  inputContainer: {
+    marginBottom: 16,
+  },
+  label: {
     fontSize: 16,
+    fontWeight: '500',
+    marginBottom: 8,
+    color: '#333',
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ccc',
-    paddingVertical: 10,
-    paddingHorizontal: 15,
+    borderColor: '#ddd',
     borderRadius: 8,
-    marginBottom: 15,
-    backgroundColor: '#fff',
+    padding: 12,
     fontSize: 16,
+    backgroundColor: '#fafafa',
   },
   textArea: {
-    minHeight: 80,
+    height: 80,
     textAlignVertical: 'top',
   },
-  loader: {
+  buttonContainer: {
     marginTop: 20,
   },
-  message: {
-    marginTop: 15,
-    textAlign: 'center',
+  button: {
+    marginBottom: 12,
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 12,
+  },
+  loadingText: {
+    marginLeft: 8,
     fontSize: 16,
-    paddingHorizontal: 10,
+    color: '#4472C4',
   },
-  success: {
-    color: 'green',
+  message: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 6,
+    fontSize: 14,
+    textAlign: 'center',
   },
-  error: {
-    color: 'red',
+  successMessage: {
+    backgroundColor: '#d4edda',
+    color: '#155724',
+    borderColor: '#c3e6cb',
+    borderWidth: 1,
   },
-  buttonWrapper: {
-    marginVertical: 8,
-  }
+  errorMessage: {
+    backgroundColor: '#f8d7da',
+    color: '#721c24',
+    borderColor: '#f5c6cb',
+    borderWidth: 1,
+  },
+  infoMessage: {
+    backgroundColor: '#d1ecf1',
+    color: '#0c5460',
+    borderColor: '#bee5eb',
+    borderWidth: 1,
+  },
 });
 
 export default VideoUpload;

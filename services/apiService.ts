@@ -1,5 +1,4 @@
-// services/apiService.ts - Updated signup methods
-
+// services/apiService.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ReactNode } from "react";
 
@@ -74,7 +73,7 @@ class ApiService {
     return this.authToken;
   }
 
-  // Initialize token from AsyncStorage
+  // Initialize token from AsyncStorage - FIXED METHOD
   async initializeAuthToken(): Promise<void> {
     try {
       const token = await AsyncStorage.getItem('authToken');
@@ -84,83 +83,81 @@ class ApiService {
       }
     } catch (e) {
       console.error('Failed to load auth token from AsyncStorage', e);
+      throw new Error('Authentication initialization failed');
     }
   }
 
-  // Helper method to make API requests
-// Update your makeRequest method in apiService.ts to handle headers properly
-
-private async makeRequest<T>(
-  endpoint: string,
-  options: RequestInit = {}
-): Promise<ApiResponse<T>> {
-  try {
-    const url = `${this.baseURL}${endpoint}`;
-    
-    // Only add Content-Type for requests with body
-    const defaultHeaders: HeadersInit = {};
-    
-    // Only add Content-Type if we have a body to send
-    if (options.body) {
-      defaultHeaders['Content-Type'] = 'application/json';
-    }
-
-    // Add authorization header if token exists
-    if (this.authToken) {
-      defaultHeaders['Authorization'] = `Bearer ${this.authToken}`;
-    }
-
-    const config: RequestInit = {
-      headers: {
-        ...defaultHeaders,
-        ...options.headers,
-      },
-      ...options,
-    };
-
-    console.log('Making request to:', url);
-    console.log('Request config:', config);
-
-    const response = await fetch(url, config);
-    
-    console.log('Response status:', response.status);
-    console.log('Response headers:', response.headers);
-
-    if (!response.ok) {
-      let errorMessage = 'Request failed';
-      try {
-        const errorData = await response.json();
-        console.log('Error response data:', errorData);
-        errorMessage = errorData.message || errorData.error || errorMessage;
-      } catch {
-        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+  // Helper method to make API requests - FIXED HEADERS
+  private async makeRequest<T>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<ApiResponse<T>> {
+    try {
+      const url = `${this.baseURL}${endpoint}`;
+      
+      // Only add Content-Type for requests with body (and not FormData)
+      const defaultHeaders: HeadersInit = {};
+      
+      // Only add Content-Type if we have a body to send and it's not FormData
+      if (options.body && !(options.body instanceof FormData)) {
+        defaultHeaders['Content-Type'] = 'application/json';
       }
+
+      // Add authorization header if token exists
+      if (this.authToken) {
+        defaultHeaders['Authorization'] = `Bearer ${this.authToken}`;
+      }
+
+      const config: RequestInit = {
+        headers: {
+          ...defaultHeaders,
+          ...options.headers,
+        },
+        ...options,
+      };
+
+      console.log('Making request to:', url);
+      console.log('Request config:', config);
+
+      const response = await fetch(url, config);
+      
+      console.log('Response status:', response.status);
+
+      if (!response.ok) {
+        let errorMessage = 'Request failed';
+        try {
+          const errorData = await response.json();
+          console.log('Error response data:', errorData);
+          errorMessage = errorData.message || errorData.error || errorMessage;
+        } catch {
+          errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        }
+        
+        return {
+          success: false,
+          error: errorMessage,
+        };
+      }
+
+      const data = await response.json();
+      console.log('Success response data:', data);
       
       return {
+        success: true,
+        data: data,
+      };
+    } catch (error) {
+      console.error('Network error:', error);
+      return {
         success: false,
-        error: errorMessage,
+        error: error instanceof Error ? error.message : 'Network error occurred',
       };
     }
-
-    const data = await response.json();
-    console.log('Success response data:', data);
-    
-    return {
-      success: true,
-      data: data,
-    };
-  } catch (error) {
-    console.error('Network error:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Network error occurred',
-    };
   }
-}
 
   // Authentication Methods
   async login(credentials: LoginRequest): Promise<ApiResponse<any>> {
-    const response = await this.makeRequest<any>('/authenticate', { // Specify <any> for response data type
+    const response = await this.makeRequest<any>('/authenticate', {
       method: 'POST',
       body: JSON.stringify(credentials),
     });
@@ -172,8 +169,6 @@ private async makeRequest<T>(
         console.log('Auth token stored in AsyncStorage');
       } catch (e) {
         console.error('Failed to save auth token to AsyncStorage', e);
-        // Optionally, handle this error, e.g., by clearing the in-memory token
-        // or returning an error indicating login was successful but session may not persist.
       }
     }
     return response;
@@ -186,11 +181,10 @@ private async makeRequest<T>(
       console.log('Auth token removed from AsyncStorage');
     } catch (e) {
       console.error('Failed to remove auth token from AsyncStorage', e);
-      // Optionally, decide if this error should be propagated
     }
   }
 
-  // User Registration Methods - Updated to match Android implementation
+  // User Registration Methods
   async signUp(userData: SignUpRequest | any): Promise<ApiResponse<any>> {
     console.log('Signup request data:', userData);
     return this.makeRequest('/person/sign-up', {
@@ -199,9 +193,7 @@ private async makeRequest<T>(
     });
   }
 
-  // Keep the register method for backward compatibility but point to correct endpoint
   async register(userData: any): Promise<ApiResponse<any>> {
-    // For basic registration, we need to format the data to match the API
     const signupData: SignUpRequest = {
       active: true,
       address: userData.address || '',
@@ -264,39 +256,34 @@ private async makeRequest<T>(
     });
   }
 
+  // FIXED VIDEO UPLOAD METHOD
   async uploadVideo(
-    // For React Native, videoFile will be an object like { uri, name, type }
     videoFile: { uri: string; name: string; type: string },
     metadata: {
-      // name: string; // Removed as backend controller doesn't use @RequestParam("name")
       title: string;
       caption: string;
     }
   ): Promise<ApiResponse<any>> {
     try {
       const formData = new FormData();
-      // The 'file' parameter for FormData needs to be structured correctly for RN
-      // It expects an object with uri, name, and type.
+      
+      // Append the video file - React Native expects this format
       formData.append('file', {
         uri: videoFile.uri,
         name: videoFile.name,
         type: videoFile.type,
-      } as any); // Cast to 'any' because FormData type defs might expect Blob/string
+      } as any);
 
-      // formData.append('name', metadata.name); // Removed: Backend controller does not expect 'name'
       formData.append('title', metadata.title);
       formData.append('caption', metadata.caption);
 
-      console.log('Uploading video with FormData:', formData);
-      // It's hard to inspect FormData directly in logs, but fields should be set.
+      console.log('Uploading video with FormData');
 
-      const headers: HeadersInit = {
-        // 'Content-Type': 'multipart/form-data', // Let fetch set this with boundary for FormData in RN
-      };
+      // Don't set Content-Type header for FormData - let fetch handle it
+      const headers: HeadersInit = {};
       if (this.authToken) {
         headers['Authorization'] = `Bearer ${this.authToken}`;
       }
-
 
       const response = await fetch(`${this.baseURL}/video/upload`, {
         method: 'POST',
@@ -443,59 +430,49 @@ private async makeRequest<T>(
     });
   }
 
-// Also update the resendOtp method to match the correct endpoint if needed
-async resendOtp(email: string): Promise<ApiResponse<any>> {
-  return this.makeRequest('/person/sign-up/resend-otp', {
-    method: 'POST',
-    body: JSON.stringify({ email }),
-  });
-}
+  // Additional methods
+  async resendOtp(email: string): Promise<ApiResponse<any>> {
+    return this.makeRequest('/person/sign-up/resend-otp', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
 
-async setPassword(email: string, password: string): Promise<ApiResponse<any>> {
-  // Use the same endpoint and method as Android implementation
-  // PUT method with query parameters, matching Android exactly
-  const encodedEmail = encodeURIComponent(email);
-  const encodedPassword = encodeURIComponent(password);
-  const endpoint = `/person/sign-up/set-password?email=${encodedEmail}&password=${encodedPassword}`;
-  
-  return this.makeRequest(endpoint, {
-    method: 'PUT',
-    headers: {
-      'accept': '*/*',
-      // Remove Content-Type for this endpoint since we're not sending JSON body
-    },
-    // No body needed since we're using query parameters
-  });
-}
+  async setPassword(email: string, password: string): Promise<ApiResponse<any>> {
+    const encodedEmail = encodeURIComponent(email);
+    const encodedPassword = encodeURIComponent(password);
+    const endpoint = `/person/sign-up/set-password?email=${encodedEmail}&password=${encodedPassword}`;
+    
+    return this.makeRequest(endpoint, {
+      method: 'PUT',
+      headers: {
+        'accept': '*/*',
+      },
+    });
+  }
 
+  async loginPerson(email: string, password: string): Promise<ApiResponse<any>> {
+    return this.makeRequest('/person/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+  }
 
-async loginPerson(email: string, password: string): Promise<ApiResponse<any>> {
-  return this.makeRequest('/person/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  });
-}
-async verifyOtp(email: string, otp: string): Promise<ApiResponse<any>> {
-  // Use the same endpoint and method as Android implementation
-  // PUT method with query parameters
-  const encodedEmail = encodeURIComponent(email);
-  const encodedOtp = encodeURIComponent(otp);
-  const endpoint = `/person/sign-up/verify-otp?email=${encodedEmail}&otp=${encodedOtp}`;
-  
-  return this.makeRequest(endpoint, {
-    method: 'PUT',
-    // No body needed since we're using query parameters
-  });
-}
+  async verifyOtp(email: string, otp: string): Promise<ApiResponse<any>> {
+    const encodedEmail = encodeURIComponent(email);
+    const encodedOtp = encodeURIComponent(otp);
+    const endpoint = `/person/sign-up/verify-otp?email=${encodedEmail}&otp=${encodedOtp}`;
+    
+    return this.makeRequest(endpoint, {
+      method: 'PUT',
+    });
+  }
 
-// Also update the resendOtp method to match the correct endpoint if needed
-
-async getPersonProfile(personId: string): Promise<ApiResponse<any>> {
-  return this.makeRequest(`/person/${personId}`, {
-    method: 'GET',
-  });
-}
-
+  async getPersonProfile(personId: string): Promise<ApiResponse<any>> {
+    return this.makeRequest(`/person/${personId}`, {
+      method: 'GET',
+    });
+  }
 }
 
 // Create and export a singleton instance
