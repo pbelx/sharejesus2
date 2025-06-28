@@ -9,6 +9,7 @@
       "@/constants/*": ["./constants/*"],
       "@/hooks/*": ["./hooks/*"],
       "@/services/*": ["./services/*"],
+      "@/utils/*": ["./utils/*"],
       "@/screens/*": ["./screens/*"]
     }
   },

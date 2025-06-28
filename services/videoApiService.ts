@@ -1,6 +1,6 @@
-// services/videoApiService.ts - Fixed Video API Service
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// services/videoApiService.ts - Updated with Auth Manager
 import { ReactNode } from "react";
+import AuthManager from '../utils/authManager';
 
 interface ApiResponse<T = any> {
   success: boolean;
@@ -39,51 +39,23 @@ interface VideoFile {
 
 class VideoApiService {
   private baseURL = 'https://himfirstapis.com';
-  private authToken: string | null = null;
+  private unsubscribeAuth: (() => void) | null = null;
 
-  // Get authentication token from AsyncStorage
-  private async getAuthToken(): Promise<string | null> {
-    if (this.authToken) {
-      return this.authToken;
-    }
-
-    try {
-      // Check all possible token storage keys
-      const tokenKeys = ['authToken', 'jwt', 'token', 'accessToken'];
-      
-      for (const key of tokenKeys) {
-        const token = await AsyncStorage.getItem(key);
-        if (token) {
-          console.log(`VideoAPI: Found auth token with key: ${key}`);
-          this.authToken = token;
-          return token;
-        }
-      }
-      
-      console.warn('VideoAPI: No auth token found in AsyncStorage');
-      return null;
-    } catch (e) {
-      console.error('VideoAPI: Failed to load auth token from AsyncStorage', e);
-      return null;
-    }
+  constructor() {
+    // Subscribe to auth token changes
+    this.unsubscribeAuth = AuthManager.subscribe((token) => {
+      console.log('VideoAPI: Auth token updated:', token ? 'Present' : 'Cleared');
+    });
   }
 
-  // Set authentication token
-  setAuthToken(token: string) {
-    this.authToken = token;
-    console.log('VideoAPI: Auth token set');
-  }
-
-  // Clear authentication token
-  clearAuthToken() {
-    this.authToken = null;
-    console.log('VideoAPI: Auth token cleared');
+  // Get authentication token from AuthManager
+  private getAuthToken(): string | null {
+    return AuthManager.getAuthToken();
   }
 
   // Check if user is authenticated
-  async isAuthenticated(): Promise<boolean> {
-    const token = await this.getAuthToken();
-    return token !== null;
+  isAuthenticated(): boolean {
+    return AuthManager.isAuthenticated();
   }
 
   // Helper method for making API requests
@@ -102,13 +74,17 @@ class VideoApiService {
       }
 
       // Add authorization header if token exists
-      const token = await this.getAuthToken();
+      const token = this.getAuthToken();
       if (token) {
-        // Try different auth header formats
         defaultHeaders['Authorization'] = `Bearer ${token}`;
         console.log('VideoAPI: Added auth header with Bearer token');
       } else {
         console.warn('VideoAPI: No auth token available for request');
+        
+        // For debugging, show auth status
+        if (__DEV__) {
+          await AuthManager.debugAuthStatus();
+        }
       }
 
       const config: RequestInit = {
@@ -125,7 +101,6 @@ class VideoApiService {
       const response = await fetch(url, config);
       
       console.log('VideoAPI: Response status:', response.status);
-      console.log('VideoAPI: Response headers:', response.headers);
 
       if (!response.ok) {
         let errorMessage = 'Request failed';
@@ -140,7 +115,7 @@ class VideoApiService {
         // Special handling for auth errors
         if (response.status === 401) {
           console.error('VideoAPI: Authentication failed - clearing token');
-          this.clearAuthToken();
+          await AuthManager.clearAuthToken();
           errorMessage = 'Authentication failed. Please login again.';
         }
         
@@ -173,8 +148,14 @@ class VideoApiService {
   ): Promise<ApiResponse<any>> {
     try {
       // Check authentication first
-      const isAuth = await this.isAuthenticated();
-      if (!isAuth) {
+      if (!this.isAuthenticated()) {
+        console.error('VideoAPI: Not authenticated for upload');
+        
+        // Debug auth status
+        if (__DEV__) {
+          await AuthManager.debugAuthStatus();
+        }
+        
         return {
           success: false,
           error: 'Authentication required. Please login first.',
@@ -183,15 +164,14 @@ class VideoApiService {
 
       const formData = new FormData();
       
-      // Append the video file - this matches your backend @RequestParam("file")
+      // Append the video file
       formData.append('file', {
         uri: videoFile.uri,
         name: videoFile.name,
         type: videoFile.type,
       } as any);
 
-      // Add metadata fields to match backend @RequestParam
-      // Your backend expects: title, caption (not name)
+      // Add metadata fields
       if (metadata.title) {
         formData.append('title', metadata.title);
       }
@@ -205,9 +185,10 @@ class VideoApiService {
         fileType: videoFile.type,
         title: metadata.title,
         caption: metadata.caption,
+        isAuthenticated: this.isAuthenticated(),
       });
 
-      // Make the upload request to match your backend endpoint
+      // Make the upload request
       return await this.makeRequest('/api/v1/video/upload', {
         method: 'POST',
         body: formData,
@@ -222,72 +203,29 @@ class VideoApiService {
     }
   }
 
-  // Get all videos with pagination
-  async getAllVideos(
-    page: number = 0,
-    size: number = 100,
-    sortBy: string = 'createdTimestamp',
-    sortOrder: string = 'DESC'
-  ): Promise<ApiResponse<any>> {
-    const queryParams = new URLSearchParams({
-      page: page.toString(),
-      size: size.toString(),
-      sortBy,
-      sortOrder,
-    });
-
-    return this.makeRequest(`/api/v1/video/public/all?${queryParams.toString()}`, {
-      method: 'GET',
-    });
-  }
-
   // Get user's videos
-  async getMyVideos(
-    page: number = 0,
-    size: number = 100,
-    sortBy: string = 'createdTimestamp',
-    sortOrder: string = 'DESC'
-  ): Promise<ApiResponse<any>> {
-    const queryParams = new URLSearchParams({
-      page: page.toString(),
-      size: size.toString(),
-      sortBy,
-      sortOrder,
-    });
+  async getMyVideos(page: number = 0, size: number = 10): Promise<ApiResponse<Video[]>> {
+    if (!this.isAuthenticated()) {
+      return {
+        success: false,
+        error: 'Authentication required to fetch your videos.',
+      };
+    }
 
-    return this.makeRequest(`/api/v1/video/my-videos?${queryParams.toString()}`, {
+    return this.makeRequest<Video[]>(`/api/v1/video/my-videos?page=${page}&size=${size}`, {
       method: 'GET',
     });
   }
 
-  // Get videos before a specific date
-  async getPrevVideos(
-    date: string,
-    page: number = 0,
-    size: number = 100,
-    sortBy: string = 'createdTimestamp',
-    sortOrder: string = 'DESC'
-  ): Promise<ApiResponse<any>> {
-    const queryParams = new URLSearchParams({
-      page: page.toString(),
-      size: size.toString(),
-      sortBy,
-      sortOrder,
-    });
-
-    return this.makeRequest(`/api/v1/video/public/prev-videos/${date}?${queryParams.toString()}`, {
-      method: 'GET',
-    });
-  }
-
-  // Delete video by ID
-  async deleteVideo(videoId: string): Promise<ApiResponse<any>> {
-    return this.makeRequest(`/api/v1/video/${videoId}`, {
-      method: 'DELETE',
-    });
+  // Cleanup subscription when service is destroyed
+  destroy(): void {
+    if (this.unsubscribeAuth) {
+      this.unsubscribeAuth();
+      this.unsubscribeAuth = null;
+    }
   }
 }
 
-// Export singleton instance
-export const videoApiService = new VideoApiService();
+// Create and export singleton instance
+const videoApiService = new VideoApiService();
 export default videoApiService;
