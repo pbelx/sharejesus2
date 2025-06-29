@@ -1,8 +1,8 @@
-// VideoUpload.tsx - Updated with proper TypeScript types and better authentication handling
+// VideoUpload.tsx - Without external file picker dependency
+import * as DocumentPicker from 'expo-document-picker';
 import React, { useEffect, useState } from 'react';
-import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import videoApiService from '../services/videoApiService';
-import { AuthDebugger } from '../utils/authDebug'; // Import the debug utility
 
 // Define the video file type
 export type VideoFileType = {
@@ -29,36 +29,36 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
   const [caption, setCaption] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [message, setMessage] = useState<string>('');
-  const [authStatus, setAuthStatus] = useState<'checking' | 'authenticated' | 'not_authenticated' | 'error'>('checking');
 
-  // Check authentication on component mount
+  // Update selectedFile when initialFile changes
   useEffect(() => {
-    checkAuthentication();
-  }, []);
+    setSelectedFile(initialFile);
+  }, [initialFile]);
 
-  const checkAuthentication = async (): Promise<void> => {
+  const handleSelectFile = async (): Promise<void> => {
     try {
-      console.log('🔍 Checking authentication status...');
+      setMessage(''); // Clear any previous messages
       
-      // Run auth diagnostic if needed (remove in production)
-      if (__DEV__) {
-        await AuthDebugger.runCompleteAuthDiagnostic();
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'video/*',
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        console.log('📁 File selected:', asset);
+        
+        setSelectedFile({
+          uri: asset.uri,
+          name: asset.name,
+          type: asset.mimeType || 'video/mp4',
+        });
+        
+        setMessage('File selected successfully!');
       }
-      
-      const isAuth = await videoApiService.isAuthenticated();
-      
-      if (isAuth) {
-        setAuthStatus('authenticated');
-        console.log('✅ User is authenticated');
-      } else {
-        setAuthStatus('not_authenticated');
-        console.log('❌ User is not authenticated');
-        setMessage('Please login to upload videos.');
-      }
-    } catch (error) {
-      console.error('❌ Auth check failed:', error);
-      setAuthStatus('error');
-      setMessage('Authentication check failed. Please try logging in again.');
+    } catch (error: any) {
+      console.error('📁 File selection error:', error);
+      setMessage('Failed to select file. Please try again.');
     }
   };
 
@@ -90,19 +90,11 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
       return false;
     }
 
-    // Name is optional based on your backend, so we don't require it
     return true;
   };
 
   const handleUpload = async (): Promise<void> => {
-    // Validate inputs first
     if (!validateInputs()) {
-      return;
-    }
-
-    // Check auth status
-    if (authStatus !== 'authenticated') {
-      setMessage('Please login first to upload videos.');
       return;
     }
 
@@ -110,7 +102,6 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
     setMessage('Uploading...');
 
     try {
-      // Ensure we have a valid file name and extension
       const extension = getFileExtension(selectedFile!.uri);
       const fileName = selectedFile!.name || `video-${Date.now()}.${extension}`;
 
@@ -120,9 +111,8 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
         type: selectedFile!.type || 'video/mp4',
       };
 
-      // Backend expects: title and caption (not name)
       const metadata = {
-        name: name.trim() || title.trim(), // Use title as fallback for name
+        name: name.trim() || title.trim(),
         title: title.trim(),
         caption: caption.trim(),
       };
@@ -140,7 +130,6 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
         setMessage(`Upload successful! Video uploaded.`);
         resetForm();
         
-        // Call onUploadComplete after a delay to show success message
         setTimeout(() => {
           if (onUploadComplete) {
             onUploadComplete(videoData);
@@ -150,11 +139,7 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
         const errorMessage = response.error || 'Unknown error occurred';
         console.error('❌ Upload failed:', errorMessage);
         
-        // Handle specific error cases
-        if (errorMessage.includes('Authentication') || errorMessage.includes('login')) {
-          setAuthStatus('not_authenticated');
-          setMessage('Session expired. Please login again.');
-        } else if (errorMessage.includes('unsupported format')) {
+        if (errorMessage.includes('unsupported format')) {
           setMessage('Upload failed: Video format not supported. Please use MP4, MOV, or MP2T format.');
         } else if (errorMessage.includes('File is empty')) {
           setMessage('Upload failed: The selected file appears to be empty.');
@@ -166,12 +151,8 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
       console.error('💥 Upload error:', error);
       setIsLoading(false);
       
-      // Provide more specific error messages
       if (error.message && error.message.includes('Network request failed')) {
         setMessage('Upload failed: Network connection error. Please check your internet connection.');
-      } else if (error.message && error.message.includes('401')) {
-        setAuthStatus('not_authenticated');
-        setMessage('Upload failed: Authentication error. Please login again.');
       } else if (error.message && error.message.includes('413')) {
         setMessage('Upload failed: File too large. Please select a smaller video file.');
       } else {
@@ -187,50 +168,6 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
     }
   };
 
-  const handleRetryAuth = async (): Promise<void> => {
-    setAuthStatus('checking');
-    setMessage('Checking authentication...');
-    await checkAuthentication();
-  };
-
-  // Show auth status
-  const renderAuthStatus = () => {
-    switch (authStatus) {
-      case 'checking':
-        return (
-          <View style={[styles.authStatus, styles.authChecking]}>
-            <Text style={styles.authStatusText}>Checking authentication...</Text>
-          </View>
-        );
-      case 'not_authenticated':
-        return (
-          <View style={[styles.authStatus, styles.authError]}>
-            <Text style={styles.authStatusText}>Not authenticated</Text>
-            <TouchableOpacity onPress={handleRetryAuth} style={styles.retryButton}>
-              <Text style={styles.retryButtonText}>Retry</Text>
-            </TouchableOpacity>
-          </View>
-        );
-      case 'authenticated':
-        return (
-          <View style={[styles.authStatus, styles.authSuccess]}>
-            <Text style={styles.authStatusText}>✅ Authenticated</Text>
-          </View>
-        );
-      case 'error':
-        return (
-          <View style={[styles.authStatus, styles.authError]}>
-            <Text style={styles.authStatusText}>Authentication error</Text>
-            <TouchableOpacity onPress={handleRetryAuth} style={styles.retryButton}>
-              <Text style={styles.retryButtonText}>Retry</Text>
-            </TouchableOpacity>
-          </View>
-        );
-      default:
-        return null;
-    }
-  };
-
   return (
     <View style={styles.scrollContainer}>
       <ScrollView 
@@ -242,15 +179,28 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
             {initialFile ? 'Upload Recorded Video' : 'Upload Video'}
           </Text>
 
-          {/* Auth Status */}
-          {renderAuthStatus()}
-
-          {/* File Selection */}
+          {/* File Selection Section */}
           <View style={styles.section}>
             <Text style={styles.label}>Selected File:</Text>
             <Text style={styles.fileName}>
               {selectedFile ? selectedFile.name || 'Video File' : 'No file selected'}
             </Text>
+            
+            {/* Add Select File Button if no file is selected or if user wants to change */}
+            {(!selectedFile || !initialFile) && (
+              <TouchableOpacity
+                style={[
+                  styles.selectFileButton,
+                  isLoading && styles.disabledButton
+                ]}
+                onPress={handleSelectFile}
+                disabled={isLoading}
+              >
+                <Text style={styles.selectFileButtonText}>
+                  {selectedFile ? 'Change Video File' : 'Select Video File'}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Form Fields */}
@@ -262,7 +212,7 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
               onChangeText={setTitle}
               placeholder="Enter video title"
               multiline={false}
-              editable={!isLoading && authStatus === 'authenticated'}
+              editable={!isLoading}
             />
           </View>
 
@@ -274,7 +224,7 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
               onChangeText={setName}
               placeholder="Enter video name"
               multiline={false}
-              editable={!isLoading && authStatus === 'authenticated'}
+              editable={!isLoading}
             />
           </View>
 
@@ -287,7 +237,7 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
               placeholder="Enter video caption"
               multiline={true}
               numberOfLines={3}
-              editable={!isLoading && authStatus === 'authenticated'}
+              editable={!isLoading}
             />
           </View>
 
@@ -317,10 +267,10 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
               style={[
                 styles.button, 
                 styles.uploadButton,
-                (isLoading || authStatus !== 'authenticated' || !selectedFile) && styles.disabledButton
+                (isLoading || !selectedFile) && styles.disabledButton
               ]}
               onPress={handleUpload}
-              disabled={isLoading || authStatus !== 'authenticated' || !selectedFile}
+              disabled={isLoading || !selectedFile}
             >
               <Text style={styles.uploadButtonText}>
                 {isLoading ? 'Uploading...' : 'Upload Video'}
@@ -333,73 +283,54 @@ const VideoUpload: React.FC<VideoUploadProps> = ({
   );
 };
 
-const styles = {
+const styles = StyleSheet.create({
   scrollContainer: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f8f9fa',
   },
   scrollView: {
     flex: 1,
   },
   container: {
+    flex: 1,
     padding: 20,
-    paddingBottom: 40,
   },
   header: {
     fontSize: 24,
-    fontWeight: 'bold' as const,
-    marginBottom: 20,
-    textAlign: 'center' as const,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 30,
     color: '#333',
   },
-  authStatus: {
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 15,
-    flexDirection: 'row' as const,
-    justifyContent: 'space-between' as const,
-    alignItems: 'center' as const,
-  },
-  authChecking: {
-    backgroundColor: '#e3f2fd',
-  },
-  authSuccess: {
-    backgroundColor: '#e8f5e8',
-  },
-  authError: {
-    backgroundColor: '#ffebee',
-  },
-  authStatusText: {
-    fontSize: 14,
-    fontWeight: '500' as const,
-  },
-  retryButton: {
-    backgroundColor: '#2196f3',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 4,
-  },
-  retryButtonText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: '500' as const,
-  },
   section: {
-    marginBottom: 15,
+    marginBottom: 20,
   },
   label: {
     fontSize: 16,
-    fontWeight: '600' as const,
+    fontWeight: '600',
     marginBottom: 8,
     color: '#333',
   },
   fileName: {
     fontSize: 14,
     color: '#666',
-    fontStyle: 'italic' as const,
+    fontStyle: 'italic',
+    marginBottom: 10,
     padding: 10,
     backgroundColor: '#f0f0f0',
+    borderRadius: 5,
+  },
+  selectFileButton: {
+    backgroundColor: '#007AFF',
+    padding: 12,
     borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  selectFileButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
   },
   input: {
     borderWidth: 1,
@@ -407,60 +338,61 @@ const styles = {
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
-    backgroundColor: 'white',
+    backgroundColor: '#fff',
   },
   textArea: {
     height: 80,
-    textAlignVertical: 'top' as const,
+    textAlignVertical: 'top',
   },
   messageContainer: {
-    marginVertical: 15,
+    marginVertical: 10,
+    padding: 10,
+    borderRadius: 5,
   },
   message: {
     fontSize: 14,
-    textAlign: 'center' as const,
-    padding: 10,
-    borderRadius: 8,
+    textAlign: 'center',
   },
   successMessage: {
-    backgroundColor: '#e8f5e8',
-    color: '#2e7d32',
+    color: '#28a745',
+    backgroundColor: '#d4edda',
   },
   errorMessage: {
-    backgroundColor: '#ffebee',
-    color: '#c62828',
+    color: '#dc3545',
+    backgroundColor: '#f8d7da',
   },
   buttonContainer: {
-    flexDirection: 'row' as const,
-    justifyContent: 'space-between' as const,
-    marginTop: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 30,
+    gap: 15,
   },
   button: {
     flex: 1,
     padding: 15,
     borderRadius: 8,
-    alignItems: 'center' as const,
-    marginHorizontal: 5,
-  },
-  uploadButton: {
-    backgroundColor: '#4caf50',
+    alignItems: 'center',
   },
   cancelButton: {
-    backgroundColor: '#f44336',
-  },
-  disabledButton: {
-    backgroundColor: '#cccccc',
-  },
-  uploadButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold' as const,
+    backgroundColor: '#6c757d',
   },
   cancelButtonText: {
     color: 'white',
     fontSize: 16,
-    fontWeight: 'bold' as const,
+    fontWeight: '600',
   },
-};
+  uploadButton: {
+    backgroundColor: '#28a745',
+  },
+  uploadButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  disabledButton: {
+    backgroundColor: '#ccc',
+    opacity: 0.6,
+  },
+});
 
 export default VideoUpload;

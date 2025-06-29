@@ -1,20 +1,26 @@
+// app/(tabs)/menu.tsx - Fixed logout implementation
 import { router } from 'expo-router';
 import React from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import apiService from '../../services/apiService'; // Adjust path if necessary
-import { homeStyles } from '../../styles/HomeStyles'; // Using existing homeStyles for consistency
+import { homeStyles } from '../../styles/HomeStyles';
+import AuthManager from '../../utils/authManager'; // Import AuthManager instead of apiService
 
 export default function MenuScreen() {
   const handleLogout = async () => {
     try {
-      await apiService.logout();
-
-    router.replace({
-      pathname:'/login'
-    }); 
+      console.log('🚪 Starting logout process...');
+      
+      // Use AuthManager to clear token - this will notify all services
+      await AuthManager.clearAuthToken();
+      
+      console.log('✅ Logout successful, redirecting to login...');
+      
+      // Navigate to login screen
+      router.replace('/login');
+      
     } catch (error) {
-      console.error('Logout failed:', error);
+      console.error('❌ Logout failed:', error);
       Alert.alert('Logout Error', 'An unexpected error occurred during logout.');
     }
   };
@@ -39,7 +45,7 @@ export default function MenuScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: homeStyles.container.backgroundColor, // Use background from homeStyles
+    backgroundColor: homeStyles.container.backgroundColor,
   },
   contentContainer: {
     flex: 1,
@@ -48,8 +54,8 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   title: {
-    fontSize: homeStyles.sectionTitle.fontSize, // Use font size from homeStyles
-    fontWeight: homeStyles.sectionTitle.fontWeight as 'bold', // Type assertion
+    fontSize: homeStyles.sectionTitle.fontSize,
+    fontWeight: homeStyles.sectionTitle.fontWeight as 'bold',
     color: homeStyles.sectionTitle.color,
     marginBottom: 10,
   },
@@ -60,10 +66,10 @@ const styles = StyleSheet.create({
     marginBottom: 40,
   },
   logoutButton: {
-    backgroundColor: '#D32F2F', // A common color for logout/destructive actions
+    backgroundColor: '#D32F2F',
     paddingVertical: 12,
     paddingHorizontal: 30,
-    borderRadius: homeStyles.actionButton.borderRadius, // Use borderRadius from homeStyles
+    borderRadius: homeStyles.actionButton.borderRadius,
     alignItems: 'center',
     marginTop: 20,
     minWidth: 200,
@@ -71,6 +77,6 @@ const styles = StyleSheet.create({
   logoutButtonText: {
     color: 'white',
     fontSize: homeStyles.actionButtonText.fontSize,
-    fontWeight: homeStyles.actionButtonText.fontWeight as '600', // Type assertion
+    fontWeight: homeStyles.actionButtonText.fontWeight as '600',
   },
 });

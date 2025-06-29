@@ -1,4 +1,4 @@
-// app/login.tsx - Updated with AuthManager
+// app/login.tsx - Updated with AuthManager and Signup Option
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import apiService from '@/services/apiService';
@@ -194,6 +194,21 @@ export default function LoginScreen() {
       alignSelf: 'center',
       marginBottom: 30,
     },
+    linkContainer: {
+      alignItems: 'center',
+    },
+    forgotPassword: {
+      textAlign: 'center',
+      marginTop: 15,
+      color: '#4472C4',
+      fontSize: 14,
+    },
+    linkText: {
+      color: '#000',
+      fontSize: 16,
+      textDecorationLine: 'underline',
+      marginTop: 10,
+    },
     debugButton: {
       backgroundColor: '#FF6B6B',
       borderRadius: 8,
@@ -237,6 +252,7 @@ export default function LoginScreen() {
               placeholderTextColor="#999"
               autoCapitalize="none"
               autoCorrect={false}
+              editable={!loading}
             />
           </View>
 
@@ -252,8 +268,13 @@ export default function LoginScreen() {
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
+                editable={!loading}
               />
-              <TouchableOpacity onPress={togglePasswordVisibility} style={dynamicStyles.eyeIcon}>
+              <TouchableOpacity 
+                onPress={togglePasswordVisibility} 
+                style={dynamicStyles.eyeIcon}
+                disabled={loading}
+              >
                 <Ionicons
                   name={showPassword ? 'eye-off' : 'eye'}
                   size={24}
@@ -278,15 +299,27 @@ export default function LoginScreen() {
             )}
           </TouchableOpacity>
 
+          <TouchableOpacity style={dynamicStyles.linkContainer}>
+            <Text style={dynamicStyles.forgotPassword}>Forgot Password?</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={dynamicStyles.linkContainer} 
+            onPress={() => router.push('/Signup')}
+            disabled={loading}
+          >
+            <Text style={dynamicStyles.linkText}>Do not have an account? Sign Up</Text>
+          </TouchableOpacity>
+
           {/* Debug button for development */}
-          {__DEV__ && (
+          {/* {__DEV__ && (
             <TouchableOpacity
               style={dynamicStyles.debugButton}
               onPress={debugAuth}
             >
               <Text style={dynamicStyles.debugButtonText}>Debug Auth</Text>
             </TouchableOpacity>
-          )}
+          )} */}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
